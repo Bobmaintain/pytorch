@@ -23,6 +23,7 @@ DeviceType SparseCsrTensorSetToDeviceType(DispatchKeySet key_set) {
 
 SparseCsrTensorImpl::SparseCsrTensorImpl(
     at::DispatchKeySet key_set,
+    Layout layout,
     const caffe2::TypeMeta data_type)
     : SparseCsrTensorImpl(
           key_set,
@@ -44,6 +45,8 @@ SparseCsrTensorImpl::SparseCsrTensorImpl(
               at::initialTensorOptions()
                   .device(SparseCsrTensorSetToDeviceType(key_set))
                   .dtype(data_type)) // values
+          ,
+          layout
       ) {}
 
 SparseCsrTensorImpl::SparseCsrTensorImpl(
@@ -51,17 +54,22 @@ SparseCsrTensorImpl::SparseCsrTensorImpl(
     const caffe2::TypeMeta data_type,
     at::Tensor crow_indices,
     at::Tensor col_indices,
-    at::Tensor values)
+    at::Tensor values,
+    Layout layout)
     : TensorImpl(key_set, data_type, values.device()),
       crow_indices_(std::move(crow_indices)),
       col_indices_(std::move(col_indices)),
-      values_(std::move(values)) {
+      values_(std::move(values)),
+      layout_(layout) {
   set_storage_access_should_throw();
 }
 
 void SparseCsrTensorImpl::resize_(int64_t nnz, IntArrayRef size) {
-  auto rows = size[0];
-  auto cols = size[1];
+  TORCH_CHECK((layout_ == kSparseCsr || layout_ == kSparseBsr), "resize_: layout ", layout_, " is not yet supported");  // TODO
+  auto row_index = size.size() - ((layout_ == kSparseCsr || layout_ == kSparseBsr) ? 2 : 1);
+  auto col_index = size.size() - ((layout_ == kSparseCsr || layout_ == kSparseBsr) ? 1 : 2);
+  auto rows = size[row_index];
+  auto cols = size[col_index];
   auto old_crow_indices_size = crow_indices_.size(-1);
   crow_indices_.resize_({rows + 1});
   if (rows + 1 >= old_crow_indices_size) {
@@ -75,6 +83,7 @@ void SparseCsrTensorImpl::resize_(int64_t nnz, IntArrayRef size) {
 }
 
 void SparseCsrTensorImpl::resize_as_sparse_csr_tensor_(const Tensor& src) {
+  set_layout(src.layout());
   crow_indices_ = at::empty_like(
       src.crow_indices(),
       src.crow_indices().options(),
